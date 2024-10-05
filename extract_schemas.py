@@ -1,15 +1,17 @@
+"""Visualize schemas."""
+
 import dataclasses
 import importlib
 import inspect
 import re
 import sys
 from enum import Enum
-from typing import Dict, List, Optional, Union, get_args, get_origin
+from typing import Any, Dict, List, Union, get_args, get_origin
 
 import pydantic
-import pygraphviz as pgv
+import pygraphviz as pgv  # type: ignore
 from pydantic.fields import FieldInfo
-from pydantic_core import PydanticUndefined  # Correctly import Undefined
+from pydantic_core import PydanticUndefined
 
 # Define built-in types to exclude
 BUILTIN_TYPES = set(sys.builtin_module_names) | {
@@ -53,7 +55,7 @@ def sanitize_name(name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_]", "_", name)
 
 
-def parse_field_type(field_type):
+def parse_field_type(field_type: Any) -> Dict:
     """
     Parse the field type to handle Optional and Union types.
 
@@ -107,7 +109,7 @@ def parse_field_type(field_type):
             return {"display": str(field_type), "types": []}
 
 
-def build_class_map(module_names: List[str]) -> Dict[str, Dict]:
+def build_class_map(module_names: List[str]) -> Dict[str, Dict]:  # noqa C901
     """
     Build a mapping of classes to their fields, types, default values, and origin.
 
@@ -120,7 +122,7 @@ def build_class_map(module_names: List[str]) -> Dict[str, Dict]:
     class_map = {}
     visited_classes = set()
 
-    def process_class(cls):
+    def process_class(cls: Any) -> None:
         class_name = cls.__name__
         if class_name in visited_classes or class_name in BUILTIN_TYPES:
             return
@@ -156,7 +158,8 @@ def build_class_map(module_names: List[str]) -> Dict[str, Dict]:
                             "has_default": has_default,
                         }
                         print(
-                            f"Processed Pydantic field: {class_name}.{field_name} = {default_value} (has_default={has_default})"
+                            f"Processed Pydantic field: {class_name}.{field_name} = {default_value} \
+                                (has_default={has_default})"
                         )
                     else:
                         fields[field_name] = {
@@ -186,7 +189,8 @@ def build_class_map(module_names: List[str]) -> Dict[str, Dict]:
                         "has_default": has_default,
                     }
                     print(
-                        f"Processed Dataclass field: {class_name}.{field_name} = {default_value} (has_default={has_default})"
+                        f"Processed Dataclass field: {class_name}.{field_name} = {default_value} \
+                            (has_default={has_default})"
                     )
             elif issubclass(cls, Enum):
                 # Enum class
@@ -214,7 +218,8 @@ def build_class_map(module_names: List[str]) -> Dict[str, Dict]:
                         "has_default": has_default,
                     }
                     print(
-                        f"Processed Regular class field: {class_name}.{field_name} = {default_value} (has_default={has_default})"
+                        f"Processed Regular class field: {class_name}.{field_name} = {default_value} \
+                            (has_default={has_default})"
                     )
         except Exception as e:
             print(f"Error processing class {class_name}: {e}")
@@ -229,8 +234,8 @@ def build_class_map(module_names: List[str]) -> Dict[str, Dict]:
         # Enums don't have field types to process further
         if not issubclass(cls, Enum):
             # Recursively process field types
-            for field_info in fields.values():
-                for base_type_name in field_info["type"]["types"]:
+            for field_info_others in fields.values():
+                for base_type_name in field_info_others["type"]["types"]:
                     if (
                         base_type_name
                         and base_type_name not in visited_classes
@@ -269,7 +274,7 @@ def build_class_map(module_names: List[str]) -> Dict[str, Dict]:
     for module_name in module_names:
         try:
             module = importlib.import_module(module_name)
-            for name, obj in inspect.getmembers(module, inspect.isclass):
+            for _, obj in inspect.getmembers(module, inspect.isclass):
                 if obj.__module__ == module.__name__:
                     process_class(obj)
         except Exception as e:
@@ -278,7 +283,10 @@ def build_class_map(module_names: List[str]) -> Dict[str, Dict]:
     return class_map
 
 
-def visualize_schemas(class_map: Dict[str, Dict]):
+def visualize_schemas(  # noqa C901
+    class_map: Dict[str, Dict],
+    filename: str = "./genai_myah_chat_service/schema/schema_viz/schemas.png",
+) -> None:
     """
     Visualize the class schemas using Graphviz.
 
@@ -338,7 +346,7 @@ def visualize_schemas(class_map: Dict[str, Dict]):
                             # Simplified Enum representation: EnumClass.MemberName
                             display_type += f" = {default_value.__class__.__name__}.{default_value.name}"
                         elif default_value == "default_factory":
-                            display_type += f" = <default_factory>"
+                            display_type += " = <default_factory>"
                         else:
                             display_type += f" = {repr(default_value)}"
                         print(
@@ -379,7 +387,8 @@ def visualize_schemas(class_map: Dict[str, Dict]):
                             arrowhead="normal",
                         )
                         print(
-                            f"Adding edge from '{sanitized_class_name}:{sanitized_field_name}_type' to '{sanitized_base_type}'"
+                            f"Adding edge from '{sanitized_class_name}:{sanitized_field_name}_type' \
+                                to '{sanitized_base_type}'"
                         )
                     else:
                         print(
@@ -409,7 +418,7 @@ def visualize_schemas(class_map: Dict[str, Dict]):
 
     # Render the graph
     G.layout(prog="dot")
-    G.draw("schemas.png")
+    G.draw(filename)
     print("\nGraph Nodes:")
     for node in G.nodes():
         print(node)
@@ -419,10 +428,11 @@ def visualize_schemas(class_map: Dict[str, Dict]):
         print(edge)
 
 
-def main():
+def main() -> None:
+    """Define all schemas module and run main function."""
     # Specify the modules you want to include
     module_names = [
-        "schemas.comment",          # Existing module
+        "schemas.comment",
         # Add other modules as needed
     ]
 
