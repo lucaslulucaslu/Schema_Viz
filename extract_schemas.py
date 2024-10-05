@@ -1,10 +1,13 @@
+import dataclasses
 import importlib
 import inspect
-import sys
-import pygraphviz as pgv
 import re
-import dataclasses
-from typing import List, Dict
+import sys
+from enum import Enum
+from typing import Dict, List
+
+import pygraphviz as pgv
+
 # Import Pydantic if available
 try:
     import pydantic
@@ -58,6 +61,12 @@ def build_class_map(module_names: List[str]) -> Dict[str, Dict]:
                     field_type = field.type
                     base_type = get_base_type(field_type)
                     fields[field_name] = base_type
+            elif issubclass(cls, Enum):
+                # Enum class
+                # Extract enum members
+                members = list(cls.__members__.keys())
+                for member_name in members:
+                    fields[member_name] = ''  # Enums don't have types for members
             else:
                 # Regular class - extract public attributes
                 attributes = [attr for attr in cls.__dict__ if not callable(getattr(cls, attr)) and not attr.startswith('_')]
@@ -74,30 +83,34 @@ def build_class_map(module_names: List[str]) -> Dict[str, Dict]:
         class_map[class_name] = {
             'fields': fields,
             'module': cls.__module__,
-            'local': cls.__module__ in module_names
+            'local': cls.__module__ in module_names,
+            'is_enum': issubclass(cls, Enum)
         }
 
-        # Recursively process field types
-        for base_type_name in fields.values():
-            if base_type_name not in visited_classes and base_type_name not in BUILTIN_TYPES:
-                try:
-                    base_cls = None
-                    if base_type_name in sys.modules:
-                        base_cls = sys.modules[base_type_name]
-                    else:
-                        base_cls = getattr(sys.modules.get(cls.__module__), base_type_name, None)
-                        if base_cls is None:
-                            base_cls = getattr(importlib.import_module(base_type_name), base_type_name)
-                    if base_cls:
-                        process_class(base_cls)
-                except Exception as e:
-                    print(f"Error importing class {base_type_name}: {e}")
-                    if base_type_name not in class_map:
-                        class_map[base_type_name] = {
-                            'fields': {},
-                            'module': None,
-                            'local': False
-                        }
+        # Enums don't have field types to process further
+        if not issubclass(cls, Enum):
+            # Recursively process field types
+            for base_type_name in fields.values():
+                if base_type_name and base_type_name not in visited_classes and base_type_name not in BUILTIN_TYPES:
+                    try:
+                        base_cls = None
+                        if base_type_name in sys.modules:
+                            base_cls = sys.modules[base_type_name]
+                        else:
+                            base_cls = getattr(sys.modules.get(cls.__module__), base_type_name, None)
+                            if base_cls is None:
+                                base_cls = getattr(importlib.import_module(base_type_name), base_type_name)
+                        if base_cls:
+                            process_class(base_cls)
+                    except Exception as e:
+                        print(f"Error importing class {base_type_name}: {e}")
+                        if base_type_name not in class_map:
+                            class_map[base_type_name] = {
+                                'fields': {},
+                                'module': None,
+                                'local': False,
+                                'is_enum': False
+                            }
 
     # Import the specified modules and process their classes
     for module_name in module_names:
@@ -132,17 +145,28 @@ def visualize_schemas(class_map: Dict[str, Dict]):
         color = module_colors.get(module, "#CCCCCC")
 
         if fields:
-            # Create a label for the node with fields
-            label = f"""<<TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0">
-            <TR><TD PORT="class_header" BGCOLOR="{color}" COLSPAN="2"><B>{class_name}</B></TD></TR>"""
-            for field_name, field_type in fields.items():
-                sanitized_field_name = sanitize_name(field_name)
-                label += f"""<TR>
-                <TD>{field_name}</TD>
-                <TD PORT="{sanitized_field_name}_type">{field_type}</TD>
-                </TR>"""
-            label += "</TABLE>>"
-            G.add_node(sanitized_class_name, shape='plaintext', label=label)
+            if class_info.get('is_enum'):
+                # Create a label for the enum node
+                label = f"""<<TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0">
+                <TR><TD BGCOLOR="{color}" COLSPAN="1"><B>{class_name} (Enum)</B></TD></TR>"""
+                for member_name in fields.keys():
+                    label += f"""<TR>
+                    <TD>{member_name}</TD>
+                    </TR>"""
+                label += "</TABLE>>"
+                G.add_node(sanitized_class_name, shape='plaintext', label=label)
+            else:
+                # Create a label for the node with fields
+                label = f"""<<TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0">
+                <TR><TD PORT="class_header" BGCOLOR="{color}" COLSPAN="2"><B>{class_name}</B></TD></TR>"""
+                for field_name, field_type in fields.items():
+                    sanitized_field_name = sanitize_name(field_name)
+                    label += f"""<TR>
+                    <TD>{field_name}</TD>
+                    <TD PORT="{sanitized_field_name}_type">{field_type}</TD>
+                    </TR>"""
+                label += "</TABLE>>"
+                G.add_node(sanitized_class_name, shape='plaintext', label=label)
         else:
             # Create a placeholder node
             G.add_node(sanitized_class_name, shape='box', style='dashed', label=class_name)
@@ -171,6 +195,22 @@ def visualize_schemas(class_map: Dict[str, Dict]):
             else:
                 print(f"Skipping built-in type '{base_type_name}' or unresolved type.")
 
+    # Add legend node
+    legend_label = """<<TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0">
+    <TR><TD COLSPAN="2"><B>Legend</B></TD></TR>"""
+
+    for module, color in module_colors.items():
+        legend_label += f"""<TR>
+        <TD BGCOLOR="{color}">&nbsp;&nbsp;&nbsp;&nbsp;</TD>
+        <TD>{module}</TD>
+        </TR>"""
+    legend_label += "</TABLE>>"
+
+    G.add_node('Legend', shape='plaintext', label=legend_label)
+
+    # Adjust graph attributes
+    G.graph_attr.update(label='Schemas Diagram', labelloc='t')
+
     # Render the graph
     G.layout(prog='dot')
     G.draw('schemas.png')
@@ -185,7 +225,7 @@ def visualize_schemas(class_map: Dict[str, Dict]):
 def main():
     # Specify the modules you want to include
     module_names = [
-        'schemas.comment',  # Replace with your local module names
+        'schemas.comment',  # Replace with third-party modules you want to include
     ]
 
     class_map = build_class_map(module_names)
