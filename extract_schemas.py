@@ -16,10 +16,11 @@ except ImportError:
 
 # Define built-in types to exclude
 BUILTIN_TYPES = set(sys.builtin_module_names) | {
-    'int', 'str', 'float', 'bool', 'list', 'dict', 'set', 'tuple', 'None',
+    'int', 'str', 'float', 'bool', 'list', 'dict', 'set', 'tuple', 'NoneType',
     'Any', 'Optional', 'Union', 'Callable', 'Type', 'Iterable', 'Iterator',
     'Sequence', 'Mapping', 'ByteString', 'bytes', 'bytearray', 'memoryview',
-    'Text', 'Complex', 'Number', 'object', 'type'
+    'Text', 'Complex', 'Number', 'object', 'type', 'frozenset', 'property',
+    'staticmethod', 'classmethod', 'function'
 }
 
 def sanitize_name(name: str) -> str:
@@ -34,7 +35,7 @@ def parse_field_type(field_type):
         type_displays = []
         for arg in args:
             if arg is type(None):
-                type_names.append('None')
+                type_names.append('NoneType')
                 type_displays.append('None')
             else:
                 result = parse_field_type(arg)
@@ -99,7 +100,18 @@ def get_project_modules(project_root):
 def build_class_map(project_root):
     class_map = {}
     visited_classes = set()
-    visited_modules = set()
+    processing_queue = []
+
+    from pathlib import Path
+
+    def is_subpath(path, parent):
+        path = Path(path).resolve()
+        parent = Path(parent).resolve()
+        try:
+            path.relative_to(parent)
+            return True
+        except ValueError:
+            return False
 
     def process_class(cls):
         class_name = cls.__name__
@@ -140,7 +152,7 @@ def build_class_map(project_root):
         if module:
             module_file = getattr(module, '__file__', None)
             if module_file:
-                is_local = os.path.commonpath([os.path.realpath(module_file), os.path.realpath(project_root)]) == os.path.realpath(project_root)
+                is_local = is_subpath(module_file, project_root)
             else:
                 is_local = False
         else:
@@ -153,51 +165,59 @@ def build_class_map(project_root):
             'is_enum': issubclass(cls, Enum)
         }
 
-        # Enums don't have field types to process further
+        # Enqueue field types for processing
         if not issubclass(cls, Enum):
-            # Recursively process field types
             for field_info in fields.values():
                 for base_type_name in field_info['types']:
                     if base_type_name and base_type_name not in visited_classes and base_type_name not in BUILTIN_TYPES:
-                        try:
-                            # Try to find the class in already imported modules
-                            base_cls = None
-                            for mod in list(sys.modules.values()):
-                                if hasattr(mod, base_type_name):
-                                    base_cls = getattr(mod, base_type_name)
-                                    break
-                            if not base_cls:
-                                # Attempt to import the module
-                                base_cls = None
-                                try:
-                                    base_cls = getattr(importlib.import_module(base_type_name), base_type_name)
-                                except:
-                                    pass
-                            if base_cls:
-                                process_class(base_cls)
-                            else:
-                                # If the class cannot be imported, add as external
-                                if base_type_name not in class_map:
-                                    class_map[base_type_name] = {
-                                        'fields': {},
-                                        'module': None,
-                                        'local': False,
-                                        'is_enum': False
-                                    }
-                        except Exception as e:
-                            print(f"Error importing class {base_type_name}: {e}")
-                            if base_type_name not in class_map:
-                                class_map[base_type_name] = {
-                                    'fields': {},
-                                    'module': None,
-                                    'local': False,
-                                    'is_enum': False
-                                }
+                        processing_queue.append((base_type_name, cls.__module__))
 
-    def process_module(module_name):
-        if module_name in visited_modules:
-            return
-        visited_modules.add(module_name)
+    def resolve_class(name, current_module_name):
+        # Try to resolve the class in the current module
+        current_module = sys.modules.get(current_module_name)
+        if current_module and hasattr(current_module, name):
+            return getattr(current_module, name)
+
+        # Try to find the class in already imported modules
+        for mod_name, mod in list(sys.modules.items()):
+            if hasattr(mod, name):
+                return getattr(mod, name)
+
+        # Try to import the module where the class might be
+        try:
+            # Assume the class is in a module with the same name
+            mod = importlib.import_module(name)
+            if hasattr(mod, name):
+                return getattr(mod, name)
+        except:
+            pass
+
+        # Try importing the module from the current module's package
+        if current_module_name and '.' in current_module_name:
+            parent_module_name = current_module_name.rsplit('.', 1)[0]
+            try:
+                mod = importlib.import_module(f"{parent_module_name}.{name}")
+                if hasattr(mod, name):
+                    return getattr(mod, name)
+            except:
+                pass
+
+        # Try importing the class from the current module's package
+        try:
+            mod = importlib.import_module(parent_module_name)
+            if hasattr(mod, name):
+                return getattr(mod, name)
+        except:
+            pass
+
+        return None
+
+    # Add project root to sys.path
+    sys.path.insert(0, project_root)
+
+    # Process local modules
+    local_modules = get_project_modules(project_root)
+    for module_name in local_modules:
         try:
             module = importlib.import_module(module_name)
             for name, obj in inspect.getmembers(module, inspect.isclass):
@@ -206,20 +226,24 @@ def build_class_map(project_root):
         except Exception as e:
             print(f"Failed to import module {module_name}: {e}")
 
-    # Add project root to sys.path
-    sys.path.insert(0, project_root)
+    # Process classes in the queue
+    while processing_queue:
+        type_name, current_module_name = processing_queue.pop()
+        if type_name in visited_classes or type_name in BUILTIN_TYPES:
+            continue
 
-    # Process local modules
-    local_modules = get_project_modules(project_root)
-    for module_name in local_modules:
-        process_module(module_name)
-
-    # Process third-party modules as encountered
-    for class_info in list(class_map.values()):
-        if not class_info['local']:
-            module_name = class_info['module']
-            if module_name and module_name not in visited_modules and module_name not in sys.builtin_module_names:
-                process_module(module_name)
+        cls = resolve_class(type_name, current_module_name)
+        if cls:
+            process_class(cls)
+        else:
+            # If the class cannot be resolved, add it as a placeholder
+            visited_classes.add(type_name)
+            class_map[type_name] = {
+                'fields': {},
+                'module': None,
+                'local': False,
+                'is_enum': False
+            }
 
     return class_map
 
@@ -232,7 +256,7 @@ def visualize_schemas(class_map: Dict[str, Dict]):
 
     # Assign colors to modules
     modules = set(info['module'] for info in class_map.values() if info['module'])
-    for module in modules:
+    for module in sorted(modules):
         module_colors[module] = color_palette[color_index % len(color_palette)]
         color_index += 1
 
