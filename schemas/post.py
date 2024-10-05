@@ -1,7 +1,8 @@
 from typing import List, Optional, Union
 
 from pydantic import BaseModel
-from user import User
+
+from schemas.user import User
 
 
 class Post(BaseModel):

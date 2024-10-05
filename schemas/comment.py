@@ -1,6 +1,7 @@
-from post import Post
 from pydantic import BaseModel
-from user import User
+
+from schemas.post import Post
+from schemas.user import User
 
 
 class Comment(BaseModel):
