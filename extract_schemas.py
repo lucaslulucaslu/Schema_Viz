@@ -1,10 +1,15 @@
 import importlib
 import inspect
-import re
 import sys
-from typing import Dict, List, Set
-
 import pygraphviz as pgv
+import re
+import dataclasses
+from typing import List, Dict
+# Import Pydantic if available
+try:
+    import pydantic
+except ImportError:
+    pydantic = None
 
 # Define built-in types to exclude
 BUILTIN_TYPES = set(sys.builtin_module_names) | {
@@ -39,37 +44,61 @@ def build_class_map(module_names: List[str]) -> Dict[str, Dict]:
             return
         visited_classes.add(class_name)
         fields = {}
-        annotations = getattr(cls, '__annotations__', {})
-        for field_name, field_type in annotations.items():
-            base_type = get_base_type(field_type)
-            fields[field_name] = base_type
+        try:
+            if pydantic and issubclass(cls, pydantic.BaseModel):
+                # Pydantic model
+                annotations = cls.__annotations__
+                for field_name, field_type in annotations.items():
+                    base_type = get_base_type(field_type)
+                    fields[field_name] = base_type
+            elif dataclasses.is_dataclass(cls):
+                # Dataclass
+                for field in dataclasses.fields(cls):
+                    field_name = field.name
+                    field_type = field.type
+                    base_type = get_base_type(field_type)
+                    fields[field_name] = base_type
+            else:
+                # Regular class - extract public attributes
+                attributes = [attr for attr in cls.__dict__ if not callable(getattr(cls, attr)) and not attr.startswith('_')]
+                for attr in attributes:
+                    try:
+                        value = getattr(cls, attr)
+                        base_type = type(value).__name__
+                        fields[attr] = base_type
+                    except Exception:
+                        pass
+        except Exception as e:
+            print(f"Error processing class {class_name}: {e}")
+
         class_map[class_name] = {
             'fields': fields,
             'module': cls.__module__,
             'local': cls.__module__ in module_names
         }
+
         # Recursively process field types
         for base_type_name in fields.values():
             if base_type_name not in visited_classes and base_type_name not in BUILTIN_TYPES:
                 try:
-                    # Try to import the class
-                    base_cls = getattr(sys.modules.get(cls.__module__), base_type_name, None)
-                    if base_cls is None:
-                        base_cls = getattr(sys.modules.get('__main__'), base_type_name, None)
-                    if base_cls is None:
-                        base_cls = getattr(sys.modules.get(base_type_name), base_type_name, None)
-                    if base_cls is None:
-                        base_cls = getattr(importlib.import_module(base_type_name), base_type_name)
-                    process_class(base_cls)
-                except Exception:
-                    # If the class cannot be imported, add as external
+                    base_cls = None
+                    if base_type_name in sys.modules:
+                        base_cls = sys.modules[base_type_name]
+                    else:
+                        base_cls = getattr(sys.modules.get(cls.__module__), base_type_name, None)
+                        if base_cls is None:
+                            base_cls = getattr(importlib.import_module(base_type_name), base_type_name)
+                    if base_cls:
+                        process_class(base_cls)
+                except Exception as e:
+                    print(f"Error importing class {base_type_name}: {e}")
                     if base_type_name not in class_map:
                         class_map[base_type_name] = {
                             'fields': {},
                             'module': None,
                             'local': False
                         }
-    
+
     # Import the specified modules and process their classes
     for module_name in module_names:
         try:
@@ -99,11 +128,11 @@ def visualize_schemas(class_map: Dict[str, Dict]):
     for class_name, class_info in class_map.items():
         sanitized_class_name = sanitize_name(class_name)
         fields = class_info['fields']
-        local = class_info.get('local', False)
         module = class_info.get('module')
-        if local:
-            color = module_colors.get(module, "#CCCCCC")
-            # Create a label for the node
+        color = module_colors.get(module, "#CCCCCC")
+
+        if fields:
+            # Create a label for the node with fields
             label = f"""<<TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0">
             <TR><TD PORT="class_header" BGCOLOR="{color}" COLSPAN="2"><B>{class_name}</B></TD></TR>"""
             for field_name, field_type in fields.items():
@@ -115,7 +144,7 @@ def visualize_schemas(class_map: Dict[str, Dict]):
             label += "</TABLE>>"
             G.add_node(sanitized_class_name, shape='plaintext', label=label)
         else:
-            # Create a placeholder node for external classes
+            # Create a placeholder node
             G.add_node(sanitized_class_name, shape='box', style='dashed', label=class_name)
         print(f"Added node: {sanitized_class_name}")
 
@@ -128,22 +157,14 @@ def visualize_schemas(class_map: Dict[str, Dict]):
                 sanitized_base_type = sanitize_name(base_type_name)
                 sanitized_field_name = sanitize_name(field_name)
                 if sanitized_base_type in G.nodes():
-                    # Use tailport and headport if source node is local and has ports
-                    if class_info.get('local', False):
-                        G.add_edge(
-                            sanitized_class_name,
-                            sanitized_base_type,
-                            tailport=f"{sanitized_field_name}_type",
-                            headport="class_header",
-                            arrowhead='normal'
-                        )
-                    else:
-                        # Source node is external
-                        G.add_edge(
-                            sanitized_class_name,
-                            sanitized_base_type,
-                            arrowhead='normal'
-                        )
+                    # Use tailport and headport
+                    G.add_edge(
+                        sanitized_class_name,
+                        sanitized_base_type,
+                        tailport=f"{sanitized_field_name}_type",
+                        headport="class_header",
+                        arrowhead='normal'
+                    )
                     print(f"Adding edge from '{sanitized_class_name}:{sanitized_field_name}_type' to '{sanitized_base_type}'")
                 else:
                     print(f"Warning: Node '{sanitized_base_type}' does not exist in the graph.")
@@ -163,10 +184,9 @@ def visualize_schemas(class_map: Dict[str, Dict]):
 
 def main():
     # Specify the modules you want to include
-    # For example, if your local modules are 'myapp.models' and 'myapp.schemas'
-    module_names = ['schemas.user', 'schemas.post', 'schemas.comment']
-    # Add any third-party modules you want to include
-    #module_names += ['third_party_package']
+    module_names = [
+        'schemas.comment',  # Replace with your local module names
+    ]
 
     class_map = build_class_map(module_names)
     visualize_schemas(class_map)
