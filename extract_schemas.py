@@ -4,12 +4,12 @@ import inspect
 import re
 import sys
 from enum import Enum
-from typing import Dict, List, Union, get_args, get_origin, Optional
+from typing import Dict, List, Optional, Union, get_args, get_origin
 
-import pygraphviz as pgv
 import pydantic
+import pygraphviz as pgv
 from pydantic.fields import FieldInfo
-from pydantic_core import PydanticUndefined
+from pydantic_core import PydanticUndefined  # Correctly import Undefined
 
 # Define built-in types to exclude
 BUILTIN_TYPES = set(sys.builtin_module_names) | {
@@ -143,7 +143,6 @@ def build_class_map(module_names: List[str]) -> Dict[str, Dict]:
                     type_info = parse_field_type(field_type)
                     field_info: FieldInfo = cls.model_fields.get(field_name)
                     if field_info:
-                        print("---", type(field_info.default), field_info.default)
                         # Determine if the field has a default value or default factory
                         if field_info.default is not PydanticUndefined:
                             default_value = field_info.default
@@ -334,8 +333,11 @@ def visualize_schemas(class_map: Dict[str, Dict]):
                     default_value = field_info["default"]
                     has_default = field_info["has_default"]
                     if has_default:
-                        # Append default value to type, handling 'default_factory'
-                        if default_value == "default_factory":
+                        # Append default value to type, handling Enum and 'default_factory'
+                        if isinstance(default_value, Enum):
+                            # Simplified Enum representation: EnumClass.MemberName
+                            display_type += f" = {default_value.__class__.__name__}.{default_value.name}"
+                        elif default_value == "default_factory":
                             display_type += f" = <default_factory>"
                         else:
                             display_type += f" = {repr(default_value)}"
@@ -420,7 +422,8 @@ def visualize_schemas(class_map: Dict[str, Dict]):
 def main():
     # Specify the modules you want to include
     module_names = [
-        "schemas.comment",  # Replace with your actual module paths
+        "schemas.comment",          # Existing module
+        # Add other modules as needed
     ]
 
     class_map = build_class_map(module_names)

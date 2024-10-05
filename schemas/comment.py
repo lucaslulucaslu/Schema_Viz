@@ -1,3 +1,5 @@
+from enum import StrEnum
+
 from pydantic import BaseModel
 
 from schemas.post import Post
@@ -9,3 +11,13 @@ class Comment(BaseModel):
     content: str
     author: User
     post: Post
+
+
+class Health(StrEnum):
+    healthy = "healthy"
+    unhealthy = "unhealthy"
+    unknown = "unknown"
+
+
+class HealthCheck(BaseModel):
+    status: Health = Health.unknown
