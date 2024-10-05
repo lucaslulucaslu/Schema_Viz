@@ -1,12 +1,35 @@
-import os
 import ast
-import pygraphviz as pgv
+import os
 import re
 
+import pygraphviz as pgv
 
-def sanitize_name(name):
-    # Replace any characters that are not letters, numbers, or underscores with underscores
-    return re.sub(r"[^a-zA-Z0-9_]", "_", name)
+BUILTIN_TYPES = {
+    "int",
+    "str",
+    "float",
+    "bool",
+    "list",
+    "dict",
+    "set",
+    "tuple",
+    "None",
+    "Any",
+    "Optional",
+    "Union",
+    "Callable",
+    "Type",
+    "Iterable",
+    "Iterator",
+    "Sequence",
+    "Mapping",
+    "ByteString",
+    "Bytes",
+    "Text",
+    "Complex",
+    "Number",
+    # Add other types you want to exclude
+}
 
 
 def get_python_files(folder_path):
@@ -75,9 +98,11 @@ def extract_fields(cls_node):
 
 
 def get_base_type(field_type):
+    if not field_type:
+        return None
     # Remove any module prefixes
     field_type = field_type.split(".")[-1]
-    # Remove typing prefixes (e.g., 'typing.List')
+    # Remove typing prefixes
     field_type = field_type.replace("typing.", "")
     # Handle common generic types
     match = re.match(r"^(?:List|Optional|Dict|Set|Tuple)\[(.+)\]$", field_type)
@@ -86,7 +111,7 @@ def get_base_type(field_type):
     # Handle Union types
     elif field_type.startswith("Union["):
         types = field_type[6:-1].split(",")
-        # Use the first type in the Union for this example
+        # Use the first type in the Union
         field_type = types[0].strip()
     # Remove any nested generics
     field_type = re.sub(r"\[.*\]", "", field_type)
@@ -96,18 +121,41 @@ def get_base_type(field_type):
 def build_class_map(folder_path):
     python_files = get_python_files(folder_path)
     class_map = {}
-    file_class_map = {}  # Map class names to their source files
+    file_class_map = {}
+    local_class_names = set()
     for file in python_files:
         classes = parse_classes(file)
         for cls in classes:
             class_name = cls.name
+            local_class_names.add(class_name)
             fields = extract_fields(cls)
-            class_map[class_name] = {"fields": fields, "file": file}
+            class_map[class_name] = {"fields": fields, "file": file, "local": True}
             file_class_map[class_name] = file
+
+    # Identify imported classes
+    imported_class_names = set()
+    for class_info in class_map.values():
+        fields = class_info["fields"]
+        for field_type in fields.values():
+            base_type = get_base_type(field_type)
+            if (
+                base_type
+                and base_type not in local_class_names
+                and base_type not in BUILTIN_TYPES
+            ):
+                imported_class_names.add(base_type)
+
+    # Add imported classes
+    for imported_class_name in imported_class_names:
+        class_map[imported_class_name] = {"fields": {}, "file": None, "local": False}
+
     return class_map, file_class_map
 
 
 def visualize_schemas(class_map, file_class_map):
+    def sanitize_name(name):
+        return re.sub(r"[^a-zA-Z0-9_]", "_", name)
+
     G = pgv.AGraph(directed=True, strict=False, rankdir="LR")
     file_colors = {}
     color_palette = [
@@ -131,22 +179,26 @@ def visualize_schemas(class_map, file_class_map):
     for class_name, class_info in class_map.items():
         sanitized_class_name = sanitize_name(class_name)
         fields = class_info["fields"]
-        file = class_info["file"]
-        color = file_colors[file]
-
-        # Create a label for the node
-        label = f"""<<TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0">
-        <TR><TD PORT="class_header" BGCOLOR="{color}" COLSPAN="2"><B>{class_name}</B></TD></TR>"""
-
-        for field_name, field_type in fields.items():
-            sanitized_field_name = sanitize_name(field_name)
-            label += f"""<TR>
-            <TD>{field_name}</TD>
-            <TD PORT="{sanitized_field_name}_type">{field_type}</TD>
-            </TR>"""
-        label += "</TABLE>>"
-
-        G.add_node(sanitized_class_name, shape="plaintext", label=label)
+        local = class_info.get("local", False)
+        if local:
+            file = class_info["file"]
+            color = file_colors[file]
+            # Create a label for the node
+            label = f"""<<TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0">
+            <TR><TD PORT="class_header" BGCOLOR="{color}" COLSPAN="2"><B>{class_name}</B></TD></TR>"""
+            for field_name, field_type in fields.items():
+                sanitized_field_name = sanitize_name(field_name)
+                label += f"""<TR>
+                <TD>{field_name}</TD>
+                <TD PORT="{sanitized_field_name}_type">{field_type}</TD>
+                </TR>"""
+            label += "</TABLE>>"
+            G.add_node(sanitized_class_name, shape="plaintext", label=label)
+        else:
+            # Create a placeholder node for imported classes
+            G.add_node(
+                sanitized_class_name, shape="box", style="dashed", label=class_name
+            )
         print(f"Added node: {sanitized_class_name}")
 
     # Create edges
@@ -155,42 +207,42 @@ def visualize_schemas(class_map, file_class_map):
         fields = class_info["fields"]
         for field_name, field_type in fields.items():
             base_type = get_base_type(field_type)
-            sanitized_base_type = sanitize_name(base_type)
-            sanitized_field_name = sanitize_name(field_name)
-            print(
-                f"Processing field '{field_name}' of class '{class_name}' with type '{field_type}' (base type: '{base_type}')"
-            )
-
-            if base_type in class_map:
-                if G.has_node(sanitized_class_name) and G.has_node(sanitized_base_type):
-                    G.add_edge(
-                        sanitized_class_name,
-                        sanitized_base_type,
-                        tailport=f"{sanitized_field_name}_type",
-                        headport="class_header",
-                        arrowhead="normal",
-                    )
+            if base_type and base_type not in BUILTIN_TYPES:
+                sanitized_base_type = sanitize_name(base_type)
+                sanitized_field_name = sanitize_name(field_name)
+                if sanitized_base_type in G.nodes():
+                    # Use tailport and headport if source node is local and has ports
+                    if class_info.get("local", False):
+                        G.add_edge(
+                            sanitized_class_name,
+                            sanitized_base_type,
+                            tailport=f"{sanitized_field_name}_type",
+                            headport=(
+                                "class_header"
+                                if class_map[base_type].get("local", False)
+                                else ""
+                            ),
+                            arrowhead="normal",
+                        )
+                    else:
+                        # Source node is imported
+                        G.add_edge(
+                            sanitized_class_name,
+                            sanitized_base_type,
+                            arrowhead="normal",
+                        )
                     print(
-                        f"Adding edge from '{sanitized_class_name}:{sanitized_field_name}_type' to '{sanitized_base_type}:class_header'"
+                        f"Adding edge from '{sanitized_class_name}:{sanitized_field_name}_type' to '{sanitized_base_type}'"
                     )
                 else:
                     print(
-                        f"Warning: Node '{sanitized_class_name}' or '{sanitized_base_type}' does not exist in the graph."
+                        f"Warning: Node '{sanitized_base_type}' does not exist in the graph."
                     )
             else:
-                print(f"Base type '{base_type}' not found in class map.")
-
+                print(f"Skipping built-in type '{base_type}' or unresolved type.")
     # Render the graph
     G.layout(prog="dot")
-    G.write("schemas.dot")
     G.draw("schemas.png")
-    print("\nGraph Nodes:")
-    for node in G.nodes():
-        print(node)
-
-    print("\nGraph Edges:")
-    for edge in G.edges():
-        print(edge)
 
 
 def main(folder_path):
