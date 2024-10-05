@@ -1,0 +1,86 @@
+digraph "" {
+	graph [bb="0,0,609,307",
+		rankdir=LR
+	];
+	node [label="\N"];
+	Comment	[height=1.6667,
+		label=<<TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0">
+        <TR><TD PORT="class_header" BGCOLOR="#9999FF" COLSPAN="2"><B>Comment</B></TD></TR><TR>
+            <TD>id</TD>
+            <TD PORT="id_type">int</TD>
+            </TR><TR>
+            <TD>content</TD>
+            <TD PORT="content_type">str</TD>
+            </TR><TR>
+            <TD>author</TD>
+            <TD PORT="author_type">User</TD>
+            </TR><TR>
+            <TD>post</TD>
+            <TD PORT="post_type">Post</TD>
+            </TR></TABLE>>,
+		pos="47,247",
+		shape=plaintext,
+		width=1.3056];
+	Post	[height=1.9722,
+		label=<<TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0">
+        <TR><TD PORT="class_header" BGCOLOR="#99FF99" COLSPAN="2"><B>Post</B></TD></TR><TR>
+            <TD>id</TD>
+            <TD PORT="id_type">int</TD>
+            </TR><TR>
+            <TD>title</TD>
+            <TD PORT="title_type">Optional[str]</TD>
+            </TR><TR>
+            <TD>content</TD>
+            <TD PORT="content_type">Union[str, None]</TD>
+            </TR><TR>
+            <TD>author</TD>
+            <TD PORT="author_type">User</TD>
+            </TR><TR>
+            <TD>tags</TD>
+            <TD PORT="tags_type">List[str]</TD>
+            </TR></TABLE>>,
+		pos="210.5,137",
+		shape=plaintext,
+		width=2.2361];
+	Comment:post_type -> Post:class_header	[arrowhead=normal,
+		pos="e,138,192 86,203 105.38,203 112.06,195.6 126.87,192.94"];
+	User	[height=1.6667,
+		label=<<TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0">
+        <TR><TD PORT="class_header" BGCOLOR="#FF9999" COLSPAN="2"><B>User</B></TD></TR><TR>
+            <TD>id</TD>
+            <TD PORT="id_type">int</TD>
+            </TR><TR>
+            <TD>name</TD>
+            <TD PORT="name_type">str</TD>
+            </TR><TR>
+            <TD>email</TD>
+            <TD PORT="email_type">str</TD>
+            </TR><TR>
+            <TD>addresses</TD>
+            <TD PORT="addresses_type">List[Address]</TD>
+            </TR></TABLE>>,
+		pos="404.5,126",
+		shape=plaintext,
+		width=2.1528];
+	Comment:author_type -> User:class_header	[arrowhead=normal,
+		pos="e,335,170 86,225 177.18,225 208.07,254.9 291,217 312.96,206.96 308.82,180.4 324.17,172.35"];
+	Post:author_type -> User:class_header	[arrowhead=normal,
+		pos="e,335,170 283,104 315.82,104 302.27,154.98 323.86,167.33"];
+	Address	[height=1.3611,
+		label=<<TABLE BORDER="1" CELLBORDER="1" CELLSPACING="0">
+        <TR><TD PORT="class_header" BGCOLOR="#FF9999" COLSPAN="2"><B>Address</B></TD></TR><TR>
+            <TD>street</TD>
+            <TD PORT="street_type">str</TD>
+            </TR><TR>
+            <TD>city</TD>
+            <TD PORT="city_type">str</TD>
+            </TR><TR>
+            <TD>zip_code</TD>
+            <TD PORT="zip_code_type">str</TD>
+            </TR></TABLE>>,
+		pos="563.5,49",
+		shape=plaintext,
+		width=1.2639];
+	User:addresses_type -> Address:class_header	[arrowhead=normal,
+		pos="e,526,82 474,82 492.78,82 500.11,82 514.6,82"];
+}
