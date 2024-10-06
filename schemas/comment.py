@@ -1,3 +1,5 @@
+"""Comment schemas."""
+
 from enum import StrEnum
 
 from pydantic import BaseModel
@@ -7,6 +9,8 @@ from schemas.user import User
 
 
 class Comment(BaseModel):
+    """Comment schema."""
+
     id: int
     content: str
     author: User
@@ -14,10 +18,14 @@ class Comment(BaseModel):
 
 
 class Health(StrEnum):
+    """Health status enum."""
+
     healthy = "healthy"
     unhealthy = "unhealthy"
     unknown = "unknown"
 
 
 class HealthCheck(BaseModel):
+    """Health check schema."""
+
     status: Health = Health.unknown
